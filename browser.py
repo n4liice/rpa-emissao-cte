@@ -353,20 +353,37 @@ async def _executar_importacao(
     except Exception as e:
         return await _erro(page, passo, e)
 
-    # ── PRÉ-CONDIÇÃO: Verificar check verde (Dados do Lote) ──────────────────
+    # ── PRÉ-CONDIÇÃO: Aguardar processamento dos arquivos (check verde) ──────────
     passo = "Pré-condição — Verificar status dos arquivos"
     try:
         logger.info(passo)
-        await page.wait_for_function(
+        # Aguarda até todos ficarem verdes OU algum ficar vermelho (erro)
+        status_arquivos = await page.wait_for_function(
             """() => {
-                const icos = Array.from(document.querySelectorAll(
-                    '#tab-batch i.fa-check-circle, i.fa.fa-check-circle'
+                const verdes = Array.from(document.querySelectorAll(
+                    'i.fa-check-circle.font-green-soft, i.fa.fa-check-circle.font-green-soft'
                 ));
-                if (icos.length === 0) return false;
-                return icos.every(i => i.classList.contains('font-green-soft'));
+                const erros = Array.from(document.querySelectorAll(
+                    'i.fa-times-circle, i.fa.fa-times-circle, i.fa-exclamation-circle.font-red'
+                ));
+                if (erros.length > 0) return 'erro';
+                if (verdes.length > 0) return 'ok';
+                return false;
             }""",
-            timeout=30000,
+            timeout=600000,  # até 10 minutos
         )
+        resultado_status = await status_arquivos.json_value()
+        if resultado_status == 'erro':
+            screenshot = await page.screenshot(full_page=False)
+            screenshot_b64 = base64.b64encode(screenshot).decode()
+            return {
+                "sucesso":    False,
+                "lote":       str(lote) if lote else None,
+                "documentos": len(xml_files),
+                "erro":       "Erro no processamento do arquivo pelo ESL Cloud.",
+                "screenshot": screenshot_b64,
+            }
+        logger.info("Arquivos processados com sucesso.")
     except Exception as e:
         return await _erro(page, passo, e)
 
