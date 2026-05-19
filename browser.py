@@ -330,9 +330,16 @@ async def _executar_importacao(
         )
 
         if not lote:
-            logger.warning("Lote nao encontrado na URL — tentando navegar via form.")
-            lote_form = await page.evaluate(
+            # ESL Cloud carrega via AJAX — tenta extrair do conteúdo da página
+            lote = await page.evaluate(
                 """() => {
+                    for (const sel of ['h1','h2','h3','h4','.modal-title','.page-title','.panel-title','[data-lote]']) {
+                        const el = document.querySelector(sel);
+                        if (el) {
+                            const m = (el.textContent || '').match(/[0-9]{4,}/);
+                            if (m) return m[0];
+                        }
+                    }
                     for (const form of document.querySelectorAll('form')) {
                         const action = form.getAttribute('action') || '';
                         const m = action.match(/batches\\/([0-9]+)/);
@@ -341,10 +348,6 @@ async def _executar_importacao(
                     return null;
                 }"""
             )
-            if lote_form:
-                lote = lote_form
-                await page.goto(f"{BASE_URL}/edi/import/batches/{lote}")
-                await page.wait_for_load_state("networkidle", timeout=30000)
 
         logger.info("Lote: %s", lote)
     except Exception as e:
@@ -376,6 +379,31 @@ async def _executar_importacao(
     except Exception as e:
         return await _erro(page, passo, e)
 
+    # ── VERIFICAÇÃO: Detectar documentos duplicados ───────────────────────────
+    passo = "Verificação — Documentos duplicados"
+    try:
+        duplicados = await page.evaluate(
+            """() => {
+                const tab = document.querySelector('#tab-invoices');
+                if (!tab) return 0;
+                const m = (tab.textContent || '').match(/Duplicados\\s*-\\s*(\\d+)/);
+                return m ? parseInt(m[1]) : 0;
+            }"""
+        )
+        if duplicados > 0:
+            screenshot = await page.screenshot(full_page=False)
+            screenshot_b64 = base64.b64encode(screenshot).decode()
+            logger.warning("Documentos duplicados detectados: %d", duplicados)
+            return {
+                "sucesso":    False,
+                "lote":       str(lote) if lote else None,
+                "documentos": len(xml_files),
+                "erro":       f"DUPLICADO ({duplicados} documento(s)) — NF-e já importada anteriormente.",
+                "screenshot": screenshot_b64,
+            }
+    except Exception as e:
+        return await _erro(page, passo, e)
+
     # ── PASSO 15: Selecionar todos os documentos ──────────────────────────────
     passo = "Passo 15 — Selecionar todos os documentos"
     try:
@@ -384,7 +412,7 @@ async def _executar_importacao(
             '#tab-invoices input[type="checkbox"].toggle.uniform', timeout=10000
         )
         await page.click('#tab-invoices input[type="checkbox"].toggle.uniform')
-        await page.wait_for_selector(".group-actions", state="visible", timeout=5000)
+        await page.wait_for_selector("#tab-invoices .group-actions", state="visible", timeout=5000)
     except Exception as e:
         return await _erro(page, passo, e)
 
@@ -452,7 +480,7 @@ async def _executar_importacao(
             '#tab-freights input[type="checkbox"].toggle.uniform', timeout=10000
         )
         await page.click('#tab-freights input[type="checkbox"].toggle.uniform')
-        await page.wait_for_selector(".group-actions", state="visible", timeout=5000)
+        await page.wait_for_selector("#tab-freights .group-actions", state="visible", timeout=5000)
     except Exception as e:
         return await _erro(page, passo, e)
 
