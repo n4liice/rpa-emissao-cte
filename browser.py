@@ -274,8 +274,8 @@ async def _executar_importacao(
     passo = "Passo 11 — Garantir Importar documentos"
     try:
         logger.info(passo)
-        await page.wait_for_selector('#edi_import_batch_auto_generate', timeout=15000)
-        await _aguardar_campo_interativo(page, '#edi_import_batch_auto_generate')
+        await page.wait_for_selector('#edi_import_batch_auto_generate', state='attached', timeout=15000)
+        await page.wait_for_selector('#select2-edi_import_batch_auto_generate-container', state='visible', timeout=15000)
         await _log_auto_generate_state(page, "antes_da_selecao")
 
         if await _select2_ui_reflete_valor(page, "edi_import_batch_auto_generate", "Importar documentos"):
