@@ -429,16 +429,22 @@ async def _executar_importacao(
             '#tab-invoices input[type="checkbox"].toggle.uniform', timeout=10000
         )
         await page.click('#tab-invoices input[type="checkbox"].toggle.uniform')
-        # Aguarda o botão "Processar" aparecer na barra de seleção
+        # A barra azul "group-actions" aparece no TOPO da página (sticky),
+        # não dentro de #tab-invoices — aguarda qualquer .group-actions visível com Processar
         await page.wait_for_function(
             """() => {
-                const bar = document.querySelector('#tab-invoices .group-actions');
-                if (!bar) return false;
-                const btns = Array.from(bar.querySelectorAll('a.btn'));
-                return btns.some(b =>
-                    b.querySelector('i.fa-file-import') ||
-                    (b.textContent || '').includes('Processar')
-                );
+                const bars = Array.from(document.querySelectorAll('.group-actions'));
+                for (const bar of bars) {
+                    const s = window.getComputedStyle(bar);
+                    const r = bar.getBoundingClientRect();
+                    if (s.display === 'none' || s.visibility === 'hidden' || r.width === 0) continue;
+                    const btns = Array.from(bar.querySelectorAll('a.btn'));
+                    if (btns.some(b =>
+                        b.querySelector('i.fa-file-import') ||
+                        (b.textContent || '').includes('Processar')
+                    )) return true;
+                }
+                return false;
             }""",
             timeout=10000,
         )
@@ -451,14 +457,18 @@ async def _executar_importacao(
         logger.info(passo)
         clicou = await page.evaluate(
             """() => {
-                const bar = document.querySelector('#tab-invoices .group-actions');
-                if (!bar) return false;
-                const btns = Array.from(bar.querySelectorAll('a.btn'));
-                const btn = btns.find(b =>
-                    b.querySelector('i.fa-file-import') ||
-                    (b.textContent || '').includes('Processar')
-                );
-                if (btn) { btn.click(); return true; }
+                const bars = Array.from(document.querySelectorAll('.group-actions'));
+                for (const bar of bars) {
+                    const s = window.getComputedStyle(bar);
+                    const r = bar.getBoundingClientRect();
+                    if (s.display === 'none' || s.visibility === 'hidden' || r.width === 0) continue;
+                    const btns = Array.from(bar.querySelectorAll('a.btn'));
+                    const btn = btns.find(b =>
+                        b.querySelector('i.fa-file-import') ||
+                        (b.textContent || '').includes('Processar')
+                    );
+                    if (btn) { btn.click(); return true; }
+                }
                 return false;
             }"""
         )
@@ -525,12 +535,18 @@ async def _executar_importacao(
         logger.info(passo)
         clicou = await page.evaluate(
             """() => {
-                const btns = Array.from(document.querySelectorAll('.group-actions a.btn'));
-                const btn = btns.find(b => {
-                    const span = b.querySelector('span.text-icon');
-                    return span && span.textContent.trim() === 'Gerar CT-es';
-                });
-                if (btn) { btn.click(); return true; }
+                const bars = Array.from(document.querySelectorAll('.group-actions'));
+                for (const bar of bars) {
+                    const s = window.getComputedStyle(bar);
+                    const r = bar.getBoundingClientRect();
+                    if (s.display === 'none' || s.visibility === 'hidden' || r.width === 0) continue;
+                    const btns = Array.from(bar.querySelectorAll('a.btn'));
+                    const btn = btns.find(b => {
+                        const span = b.querySelector('span.text-icon');
+                        return span && span.textContent.trim() === 'Gerar CT-es';
+                    });
+                    if (btn) { btn.click(); return true; }
+                }
                 return false;
             }"""
         )
