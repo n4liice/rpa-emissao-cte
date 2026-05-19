@@ -79,7 +79,10 @@ async def _fazer_login(browser):
         await page.fill("#user_email", email)
         await page.fill("#user_password", senha)
         await page.click("input[type=submit]")
-        await page.wait_for_url("**/tms**", timeout=15000)
+        await page.wait_for_function(
+            "() => !window.location.href.includes('/users/sign_in')",
+            timeout=15000,
+        )
         logger.info("Login realizado. URL: %s", page.url)
     except Exception as e:
         await context.close()
