@@ -298,41 +298,42 @@ async def _executar_importacao(
     except Exception as e:
         return await _erro(page, passo, e)
 
-    # ── PASSO 12: Salvar novamente após definir o processamento ───────────────
-    passo = "Passo 12 — Salvar com Importar documentos"
+    # ── PASSO 12: Extrair ID do lote e navegar para a página do batch ───────────
+    # O batch já foi criado com auto_generate=only_documents no Passo 8.
+    # Extraímos o ID do form (action muda para /batches/ID após criação)
+    # e navegamos direto — sem necessidade de segundo save.
+    passo = "Passo 12 — Navegar para página do lote"
+    lote = None
     try:
         logger.info(passo)
-        clicou = await page.evaluate(
+        lote = await page.evaluate(
             """() => {
-                const modal = document.querySelector('.modal.fade.in, .modal.show');
-                const alvo = modal || document;
-                const btns = Array.from(alvo.querySelectorAll('button#submit, button[type="submit"]'));
-                const btn = btns.find(b => {
-                    const style = window.getComputedStyle(b);
-                    const rect = b.getBoundingClientRect();
-                    return style.display !== 'none'
-                        && style.visibility !== 'hidden'
-                        && rect.width > 0
-                        && rect.height > 0;
-                }) || btns[0];
-                if (btn) { btn.click(); return true; }
-                return false;
+                for (const form of document.querySelectorAll('form')) {
+                    const action = form.getAttribute('action') || '';
+                    const m = action.match(/batches\\/([0-9]+)/);
+                    if (m) return m[1];
+                }
+                const m = window.location.href.match(/batches\\/([0-9]+)/);
+                return m ? m[1] : null;
             }"""
         )
-        if not clicou:
-            raise RuntimeError("Botão de salvar não encontrado no Passo 12.")
-        await page.wait_for_timeout(1000)
+        if lote:
+            logger.info("Lote identificado no form: %s — navegando para página do batch.", lote)
+            await page.goto(f"{BASE_URL}/edi/import/batches/{lote}")
+            await page.wait_for_load_state("networkidle", timeout=30000)
+        else:
+            logger.warning("ID do lote nao encontrado no form — aguardando networkidle.")
+            await page.wait_for_load_state("networkidle", timeout=30000)
     except Exception as e:
         return await _erro(page, passo, e)
 
-    # ── PASSO 13: Aguarda resultado e extrai número do lote ───────────────────
+    # ── PASSO 13: Confirmar número do lote na URL ─────────────────────────────
     passo = "Passo 13 — Extrair número do lote"
-    lote = None
     try:
         logger.info("Aguardando processamento...")
         await page.wait_for_load_state("networkidle", timeout=30000)
 
-        lote = await page.evaluate("""
+        lote_url = await page.evaluate("""
             const url = window.location.href;
             const match = url.match(/batches\\/([0-9]+)/);
             if (match) return match[1];
@@ -346,6 +347,8 @@ async def _executar_importacao(
             }
             return null;
         """)
+        if lote_url:
+            lote = lote_url
         logger.info("Lote: %s", lote)
     except Exception as e:
         return await _erro(page, passo, e)
