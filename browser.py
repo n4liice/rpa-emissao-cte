@@ -298,57 +298,54 @@ async def _executar_importacao(
     except Exception as e:
         return await _erro(page, passo, e)
 
-    # ── PASSO 12: Extrair ID do lote e navegar para a página do batch ───────────
-    # O batch já foi criado com auto_generate=only_documents no Passo 8.
-    # Extraímos o ID do form (action muda para /batches/ID após criação)
-    # e navegamos direto — sem necessidade de segundo save.
-    passo = "Passo 12 — Navegar para página do lote"
+    # ── PASSO 12: Aguardar navegação para a página do lote ───────────────────────
+    passo = "Passo 12 — Aguardar página do lote"
     lote = None
     try:
         logger.info(passo)
-        lote = await page.evaluate(
-            """() => {
-                for (const form of document.querySelectorAll('form')) {
-                    const action = form.getAttribute('action') || '';
-                    const m = action.match(/batches\\/([0-9]+)/);
-                    if (m) return m[1];
-                }
-                const m = window.location.href.match(/batches\\/([0-9]+)/);
-                return m ? m[1] : null;
-            }"""
-        )
-        if lote:
-            logger.info("Lote identificado no form: %s — navegando para página do batch.", lote)
-            await page.goto(f"{BASE_URL}/edi/import/batches/{lote}")
-            await page.wait_for_load_state("networkidle", timeout=30000)
-        else:
-            logger.warning("ID do lote nao encontrado no form — aguardando networkidle.")
-            await page.wait_for_load_state("networkidle", timeout=30000)
+        await page.wait_for_load_state("networkidle", timeout=30000)
+        await page.wait_for_timeout(1000)
     except Exception as e:
         return await _erro(page, passo, e)
 
-    # ── PASSO 13: Confirmar número do lote na URL ─────────────────────────────
+    # ── PASSO 13: Extrair número do lote ─────────────────────────────────────
     passo = "Passo 13 — Extrair número do lote"
     try:
         logger.info("Aguardando processamento...")
-        await page.wait_for_load_state("networkidle", timeout=30000)
 
-        lote_url = await page.evaluate("""
-            const url = window.location.href;
-            const match = url.match(/batches\\/([0-9]+)/);
-            if (match) return match[1];
+        lote = await page.evaluate(
+            """() => {
+                const m = window.location.href.match(/batches\\/([0-9]+)/);
+                if (m) return m[1];
 
-            for (const sel of ['h1', '.page-title', '.alert-success', '[data-lote]']) {
-                const el = document.querySelector(sel);
-                if (el) {
-                    const m = el.textContent.trim().match(/[0-9]{4,}/);
-                    if (m) return m[0];
+                for (const sel of ['h1', '.page-title', '.alert-success', '[data-lote]']) {
+                    const el = document.querySelector(sel);
+                    if (el) {
+                        const n = el.textContent.trim().match(/[0-9]{4,}/);
+                        if (n) return n[0];
+                    }
                 }
-            }
-            return null;
-        """)
-        if lote_url:
-            lote = lote_url
+                return null;
+            }"""
+        )
+
+        if not lote:
+            logger.warning("Lote nao encontrado na URL — tentando navegar via form.")
+            lote_form = await page.evaluate(
+                """() => {
+                    for (const form of document.querySelectorAll('form')) {
+                        const action = form.getAttribute('action') || '';
+                        const m = action.match(/batches\\/([0-9]+)/);
+                        if (m) return m[1];
+                    }
+                    return null;
+                }"""
+            )
+            if lote_form:
+                lote = lote_form
+                await page.goto(f"{BASE_URL}/edi/import/batches/{lote}")
+                await page.wait_for_load_state("networkidle", timeout=30000)
+
         logger.info("Lote: %s", lote)
     except Exception as e:
         return await _erro(page, passo, e)
