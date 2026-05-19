@@ -490,21 +490,31 @@ async def _executar_importacao(
     except Exception as e:
         return await _erro(page, passo, e)
 
-    # ── PASSO 18: Verificar se todos os documentos estão em "Processados" ─────
-    passo = "Passo 18 — Verificar documentos processados"
+    # ── PASSO 18: Aguardar processamento (não-fatal) ──────────────────────────
+    # O ESL Cloud pode não atualizar Pendentes→Processados via AJAX sem reload.
+    # Se a condição não for atendida em 30s, prosseguimos — o Passo 19 detecta
+    # os fretes quando eles aparecerem na aba Fretes.
+    passo = "Passo 18 — Aguardar processamento dos documentos"
     try:
         logger.info(passo)
-        await page.wait_for_function(
-            """() => {
-                const tab = document.querySelector('#tab-invoices');
-                if (!tab) return false;
-                const txt = tab.textContent || '';
-                const pendentes   = parseInt(txt.match(/Pendentes\\s*-\\s*(\\d+)/)?.[1]   || '1');
-                const processados = parseInt(txt.match(/Processados\\s*-\\s*(\\d+)/)?.[1] || '0');
-                return pendentes === 0 && processados > 0;
-            }""",
-            timeout=120000,
-        )
+        try:
+            await page.wait_for_function(
+                """() => {
+                    const tab = document.querySelector('#tab-invoices');
+                    if (!tab) return false;
+                    const txt = tab.textContent || '';
+                    const pendentes   = parseInt(txt.match(/Pendentes\\s*-\\s*(\\d+)/)?.[1]   || '1');
+                    const processados = parseInt(txt.match(/Processados\\s*-\\s*(\\d+)/)?.[1] || '0');
+                    return pendentes === 0 && processados > 0;
+                }""",
+                timeout=30000,
+            )
+            logger.info("Documentos confirmados como Processados na aba.")
+        except Exception:
+            logger.info(
+                "Passo 18: timeout aguardando Processados — ESL pode precisar de reload. "
+                "Prosseguindo para Fretes (Passo 19 verifica os fretes)."
+            )
     except Exception as e:
         return await _erro(page, passo, e)
 
@@ -515,9 +525,9 @@ async def _executar_importacao(
     try:
         logger.info(passo)
         tem_fretes = False
-        for tentativa in range(6):  # até ~1 minuto de espera
+        for tentativa in range(12):  # até ~2 minutos de espera (12 × ~10s)
             await page.click('a[href="#tab-freights"]')
-            await page.wait_for_timeout(3000)
+            await page.wait_for_timeout(4000)
 
             tem_fretes = await page.evaluate(
                 """() => {
@@ -536,7 +546,7 @@ async def _executar_importacao(
                 tentativa + 1,
             )
             await page.click('a[href="#tab-invoices"]')
-            await page.wait_for_timeout(5000)
+            await page.wait_for_timeout(6000)
 
         if not tem_fretes:
             raise RuntimeError("Nenhum frete encontrado após múltiplas tentativas de reload.")
