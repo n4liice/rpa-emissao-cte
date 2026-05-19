@@ -429,7 +429,19 @@ async def _executar_importacao(
             '#tab-invoices input[type="checkbox"].toggle.uniform', timeout=10000
         )
         await page.click('#tab-invoices input[type="checkbox"].toggle.uniform')
-        await page.wait_for_selector("#tab-invoices .group-actions", state="visible", timeout=5000)
+        # Aguarda o botão "Processar" aparecer na barra de seleção
+        await page.wait_for_function(
+            """() => {
+                const bar = document.querySelector('#tab-invoices .group-actions');
+                if (!bar) return false;
+                const btns = Array.from(bar.querySelectorAll('a.btn'));
+                return btns.some(b =>
+                    b.querySelector('i.fa-file-import') ||
+                    (b.textContent || '').includes('Processar')
+                );
+            }""",
+            timeout=10000,
+        )
     except Exception as e:
         return await _erro(page, passo, e)
 
@@ -439,14 +451,20 @@ async def _executar_importacao(
         logger.info(passo)
         clicou = await page.evaluate(
             """() => {
-                const btns = Array.from(document.querySelectorAll('.group-actions a.btn'));
-                const btn = btns.find(b => b.querySelector('i.fa-file-import'));
+                const bar = document.querySelector('#tab-invoices .group-actions');
+                if (!bar) return false;
+                const btns = Array.from(bar.querySelectorAll('a.btn'));
+                const btn = btns.find(b =>
+                    b.querySelector('i.fa-file-import') ||
+                    (b.textContent || '').includes('Processar')
+                );
                 if (btn) { btn.click(); return true; }
                 return false;
             }"""
         )
         if not clicou:
             raise RuntimeError("Botão 'Processar' não encontrado na barra de ações.")
+        await page.wait_for_timeout(1500)
     except Exception as e:
         return await _erro(page, passo, e)
 
@@ -455,7 +473,7 @@ async def _executar_importacao(
     try:
         logger.info(passo)
         await page.wait_for_selector(
-            "button.swal2-confirm.swal2-styled", state="visible", timeout=10000
+            "button.swal2-confirm.swal2-styled", state="visible", timeout=15000
         )
         await page.click("button.swal2-confirm.swal2-styled")
         await page.wait_for_timeout(1000)
