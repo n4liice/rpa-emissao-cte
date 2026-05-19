@@ -508,12 +508,38 @@ async def _executar_importacao(
     except Exception as e:
         return await _erro(page, passo, e)
 
-    # ── PASSO 19: Clicar na aba Fretes ───────────────────────────────────────
+    # ── PASSO 19: Clicar na aba Fretes (com retry se vazio) ──────────────────
+    # Após o Processar, o ESL Cloud demora para gerar os fretes via AJAX.
+    # Navegar Documentos Importados → Fretes força o reload da aba.
     passo = "Passo 19 — Clicar na aba Fretes"
     try:
         logger.info(passo)
-        await page.click('a[href="#tab-freights"]')
-        await page.wait_for_timeout(1000)
+        tem_fretes = False
+        for tentativa in range(6):  # até ~1 minuto de espera
+            await page.click('a[href="#tab-freights"]')
+            await page.wait_for_timeout(3000)
+
+            tem_fretes = await page.evaluate(
+                """() => {
+                    const tab = document.querySelector('#tab-freights');
+                    if (!tab) return false;
+                    const rows = tab.querySelectorAll('tbody tr');
+                    return rows.length > 0 && !tab.textContent.includes('Nenhum frete localizado');
+                }"""
+            )
+            if tem_fretes:
+                logger.info("Fretes carregados na tentativa %d.", tentativa + 1)
+                break
+
+            logger.info(
+                "Tentativa %d: nenhum frete ainda — voltando para Documentos Importados para forcar reload...",
+                tentativa + 1,
+            )
+            await page.click('a[href="#tab-invoices"]')
+            await page.wait_for_timeout(5000)
+
+        if not tem_fretes:
+            raise RuntimeError("Nenhum frete encontrado após múltiplas tentativas de reload.")
     except Exception as e:
         return await _erro(page, passo, e)
 
