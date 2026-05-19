@@ -302,7 +302,25 @@ async def _executar_importacao(
     passo = "Passo 12 — Salvar com Importar documentos"
     try:
         logger.info(passo)
-        await page.click('button#submit')
+        clicou = await page.evaluate(
+            """() => {
+                const modal = document.querySelector('.modal.fade.in, .modal.show');
+                const alvo = modal || document;
+                const btns = Array.from(alvo.querySelectorAll('button#submit, button[type="submit"]'));
+                const btn = btns.find(b => {
+                    const style = window.getComputedStyle(b);
+                    const rect = b.getBoundingClientRect();
+                    return style.display !== 'none'
+                        && style.visibility !== 'hidden'
+                        && rect.width > 0
+                        && rect.height > 0;
+                }) || btns[0];
+                if (btn) { btn.click(); return true; }
+                return false;
+            }"""
+        )
+        if not clicou:
+            raise RuntimeError("Botão de salvar não encontrado no Passo 12.")
         await page.wait_for_timeout(1000)
     except Exception as e:
         return await _erro(page, passo, e)
