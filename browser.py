@@ -519,15 +519,25 @@ async def _executar_importacao(
         return await _erro(page, passo, e)
 
     # ── PASSO 19: Clicar na aba Fretes (com retry se vazio) ──────────────────
-    # Após o Processar, o ESL Cloud demora para gerar os fretes via AJAX.
+    # O ESL Cloud pode demorar vários minutos para gerar os fretes via AJAX.
     # Navegar Documentos Importados → Fretes força o reload da aba.
+    # Usamos timeout por tempo (não por contagem) com espera progressiva.
     passo = "Passo 19 — Clicar na aba Fretes"
     try:
+        import time as _time
         logger.info(passo)
         tem_fretes = False
-        for tentativa in range(12):  # até ~2 minutos de espera (12 × ~10s)
+        MAX_ESPERA_FRETES = 600  # 10 minutos no total
+        _inicio = _time.monotonic()
+        tentativa = 0
+        while True:
+            tentativa += 1
+            decorrido = _time.monotonic() - _inicio
+
             await page.click('a[href="#tab-freights"]')
-            await page.wait_for_timeout(4000)
+            # Espera progressiva: 4s nas primeiras tentativas, cresce até 15s
+            wait_aba = min(4000 + tentativa * 500, 15000)
+            await page.wait_for_timeout(wait_aba)
 
             tem_fretes = await page.evaluate(
                 """() => {
@@ -538,18 +548,30 @@ async def _executar_importacao(
                 }"""
             )
             if tem_fretes:
-                logger.info("Fretes carregados na tentativa %d.", tentativa + 1)
+                logger.info(
+                    "Fretes carregados na tentativa %d (%.0fs decorridos).",
+                    tentativa,
+                    decorrido,
+                )
                 break
 
+            decorrido = _time.monotonic() - _inicio
+            if decorrido >= MAX_ESPERA_FRETES:
+                raise RuntimeError(
+                    f"Nenhum frete encontrado após {tentativa} tentativas ({decorrido:.0f}s). "
+                    "ESL demorou mais do que o limite de 10 minutos."
+                )
+
             logger.info(
-                "Tentativa %d: nenhum frete ainda — voltando para Documentos Importados para forcar reload...",
-                tentativa + 1,
+                "Tentativa %d (%.0fs): nenhum frete ainda — voltando para Documentos Importados...",
+                tentativa,
+                decorrido,
             )
             await page.click('a[href="#tab-invoices"]')
-            await page.wait_for_timeout(6000)
+            # Espera progressiva ao voltar: 6s no início, cresce até 20s
+            wait_volta = min(6000 + tentativa * 500, 20000)
+            await page.wait_for_timeout(wait_volta)
 
-        if not tem_fretes:
-            raise RuntimeError("Nenhum frete encontrado após múltiplas tentativas de reload.")
     except Exception as e:
         return await _erro(page, passo, e)
 
