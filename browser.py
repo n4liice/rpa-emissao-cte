@@ -426,9 +426,9 @@ async def _executar_importacao(
     try:
         logger.info(passo)
         await page.wait_for_selector(
-            '#tab-invoices input[type="checkbox"].toggle.uniform', timeout=10000
+            '#tab-invoices input[type="checkbox"].toggle.uniform:not([disabled])', timeout=10000
         )
-        await page.click('#tab-invoices input[type="checkbox"].toggle.uniform')
+        await page.click('#tab-invoices input[type="checkbox"].toggle.uniform:not([disabled])')
         # A barra azul "group-actions" aparece no TOPO da página (sticky),
         # não dentro de #tab-invoices — aguarda qualquer .group-actions visível com Processar
         await page.wait_for_function(
@@ -580,9 +580,9 @@ async def _executar_importacao(
     try:
         logger.info(passo)
         await page.wait_for_selector(
-            '#tab-freights input[type="checkbox"].toggle.uniform', timeout=10000
+            '#tab-freights input[type="checkbox"].toggle.uniform:not([disabled])', timeout=10000
         )
-        await page.click('#tab-freights input[type="checkbox"].toggle.uniform')
+        await page.click('#tab-freights input[type="checkbox"].toggle.uniform:not([disabled])')
         await page.wait_for_selector("#tab-freights .group-actions", state="visible", timeout=5000)
     except Exception as e:
         return await _erro(page, passo, e)
