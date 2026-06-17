@@ -426,7 +426,7 @@ async def _executar_importacao(
     try:
         logger.info(passo)
         await page.wait_for_selector(
-            '#tab-invoices input[type="checkbox"].toggle.uniform:not([disabled])', timeout=10000
+            '#tab-invoices input[type="checkbox"].toggle.uniform:not([disabled])', timeout=30000
         )
         await page.click('#tab-invoices input[type="checkbox"].toggle.uniform:not([disabled])')
         # A barra azul "group-actions" aparece no TOPO da página (sticky),
