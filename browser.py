@@ -309,45 +309,48 @@ async def _executar_importacao(
         return await _erro(page, passo, e)
 
     # ── PASSO 13: Extrair número do lote ─────────────────────────────────────
+    # O lote fica em #batch-modal h4.modal-title com texto "Lote: 17329".
+    # Aguardamos o modal abrir antes de ler.
     passo = "Passo 13 — Extrair número do lote"
     try:
         logger.info("Aguardando processamento...")
 
-        lote = await page.evaluate(
-            """() => {
-                const m = window.location.href.match(/batches\\/([0-9]+)/);
-                if (m) return m[1];
+        # Primário: #batch-modal h4.modal-title → "Lote: NNNNN"
+        lote = None
+        try:
+            await page.wait_for_selector("#batch-modal h4.modal-title", state="visible", timeout=8000)
+            texto_lote = await page.inner_text("#batch-modal h4.modal-title")
+            import re as _re
+            m = _re.search(r"Lote:\s*(\d+)", texto_lote)
+            if m:
+                lote = m.group(1)
+                logger.info("Lote extraído do modal: %s", lote)
+        except Exception:
+            pass
 
-                for (const sel of ['h1', '.page-title', '.alert-success', '[data-lote]']) {
-                    const el = document.querySelector(sel);
-                    if (el) {
-                        const n = el.textContent.trim().match(/[0-9]{4,}/);
-                        if (n) return n[0];
-                    }
-                }
-                return null;
-            }"""
-        )
-
+        # Fallback: URL, formulários e elementos genéricos
         if not lote:
-            # ESL Cloud carrega via AJAX — tenta extrair do conteúdo da página
             lote = await page.evaluate(
                 """() => {
-                    for (const sel of ['h1','h2','h3','h4','.modal-title','.page-title','.panel-title','[data-lote]']) {
-                        const el = document.querySelector(sel);
-                        if (el) {
-                            const m = (el.textContent || '').match(/[0-9]{4,}/);
-                            if (m) return m[0];
-                        }
-                    }
-                    for (const form of document.querySelectorAll('form')) {
-                        const action = form.getAttribute('action') || '';
-                        const m = action.match(/batches\\/([0-9]+)/);
+                    // URL
+                    const mu = window.location.href.match(/batches\\/([0-9]+)/);
+                    if (mu) return mu[1];
+                    // #batch-modal (qualquer filho com número)
+                    const modal = document.querySelector('#batch-modal');
+                    if (modal) {
+                        const m = (modal.textContent || '').match(/Lote:\\s*(\\d+)/);
                         if (m) return m[1];
+                    }
+                    // formulários com action contendo o ID
+                    for (const form of document.querySelectorAll('form')) {
+                        const mf = (form.getAttribute('action') || '').match(/batches\\/([0-9]+)/);
+                        if (mf) return mf[1];
                     }
                     return null;
                 }"""
             )
+            if lote:
+                logger.info("Lote extraído via fallback: %s", lote)
 
         logger.info("Lote: %s", lote)
     except Exception as e:
