@@ -421,72 +421,80 @@ async def _executar_importacao(
     except Exception as e:
         return await _erro(page, passo, e)
 
-    # ── PASSO 15: Selecionar todos os documentos ──────────────────────────────
-    passo = "Passo 15 — Selecionar todos os documentos"
+    # ── PASSO 15: Clicar em "Processar Todos" ────────────────────────────────
+    passo = "Passo 15 — Clicar em Processar Todos"
     try:
         logger.info(passo)
-        await page.wait_for_selector(
-            '#tab-invoices input[type="checkbox"].toggle.uniform:not([disabled])', timeout=30000
-        )
-        await page.click('#tab-invoices input[type="checkbox"].toggle.uniform:not([disabled])')
-        # A barra azul "group-actions" aparece no TOPO da página (sticky),
-        # não dentro de #tab-invoices — aguarda qualquer .group-actions visível com Processar
-        await page.wait_for_function(
-            """() => {
-                const bars = Array.from(document.querySelectorAll('.group-actions'));
-                for (const bar of bars) {
-                    const s = window.getComputedStyle(bar);
-                    const r = bar.getBoundingClientRect();
-                    if (s.display === 'none' || s.visibility === 'hidden' || r.width === 0) continue;
-                    const btns = Array.from(bar.querySelectorAll('a.btn'));
-                    if (btns.some(b =>
-                        b.querySelector('i.fa-file-import') ||
-                        (b.textContent || '').includes('Processar')
-                    )) return true;
-                }
-                return false;
-            }""",
-            timeout=10000,
-        )
+        btn_sel = "#tab-invoices button.btn-primary:not([disabled])"
+        # Aguarda o botão ficar visível e habilitado (até 30s)
+        await page.wait_for_selector(btn_sel, state="visible", timeout=30000)
+        # Retry de até 3x caso ainda apareça desabilitado
+        for tentativa_btn in range(3):
+            habilitado = await page.evaluate(
+                f"""() => {{
+                    const b = document.querySelector('{btn_sel}');
+                    return b ? !b.disabled : false;
+                }}"""
+            )
+            if habilitado:
+                break
+            logger.info("Botão Processar Todos ainda desabilitado — aguardando (tentativa %d)...", tentativa_btn + 1)
+            await page.wait_for_timeout(3000)
+        else:
+            raise RuntimeError("Botão 'Processar Todos' permaneceu desabilitado após 3 tentativas.")
+        # Clique com fallback via JS (botão pode ter tabindex="-1")
+        try:
+            await page.click(btn_sel, timeout=8000)
+        except Exception:
+            await page.evaluate(
+                """() => {
+                    const b = document.querySelector('#tab-invoices button.btn-primary:not([disabled])');
+                    if (b) b.click();
+                }"""
+            )
     except Exception as e:
         return await _erro(page, passo, e)
 
-    # ── PASSO 16: Clicar em Processar ────────────────────────────────────────
-    passo = "Passo 16 — Clicar em Processar"
+    # ── PASSO 16: Confirmar SweetAlert "Confirma geração dos fretes?" ─────────
+    passo = "Passo 16 — Confirmar geração dos fretes"
     try:
         logger.info(passo)
-        clicou = await page.evaluate(
-            """() => {
-                const bars = Array.from(document.querySelectorAll('.group-actions'));
-                for (const bar of bars) {
-                    const s = window.getComputedStyle(bar);
-                    const r = bar.getBoundingClientRect();
-                    if (s.display === 'none' || s.visibility === 'hidden' || r.width === 0) continue;
-                    const btns = Array.from(bar.querySelectorAll('a.btn'));
-                    const btn = btns.find(b =>
-                        b.querySelector('i.fa-file-import') ||
-                        (b.textContent || '').includes('Processar')
-                    );
-                    if (btn) { btn.click(); return true; }
-                }
-                return false;
-            }"""
-        )
-        if not clicou:
-            raise RuntimeError("Botão 'Processar' não encontrado na barra de ações.")
-        await page.wait_for_timeout(1500)
-    except Exception as e:
-        return await _erro(page, passo, e)
-
-    # ── PASSO 17: Confirmar modal "Confirma geração dos fretes?" ─────────────
-    passo = "Passo 17 — Confirmar geração dos fretes"
-    try:
-        logger.info(passo)
-        await page.wait_for_selector(
-            "button.swal2-confirm.swal2-styled", state="visible", timeout=15000
-        )
-        await page.click("button.swal2-confirm.swal2-styled")
-        await page.wait_for_timeout(1000)
+        swal_apareceu = False
+        for tentativa_swal in range(2):
+            try:
+                await page.wait_for_selector(".swal2-popup", state="visible", timeout=8000)
+                swal_apareceu = True
+                break
+            except Exception:
+                if tentativa_swal < 1:
+                    logger.info("SweetAlert não apareceu — reclicando Processar Todos...")
+                    try:
+                        await page.click(btn_sel, timeout=5000)
+                    except Exception:
+                        await page.evaluate(
+                            """() => {
+                                const b = document.querySelector('#tab-invoices button.btn-primary:not([disabled])');
+                                if (b) b.click();
+                            }"""
+                        )
+        if not swal_apareceu:
+            raise RuntimeError("Diálogo de confirmação não apareceu após 2 tentativas.")
+        # Valida conteúdo antes de confirmar
+        titulo = await page.inner_text(".swal2-title")
+        try:
+            texto = await page.inner_text(".swal2-html-container")
+        except Exception:
+            texto = await page.inner_text(".swal2-content")
+        if "Atenção" not in titulo or "Confirma geração dos fretes" not in texto:
+            screenshot = await page.screenshot(full_page=False)
+            screenshot_b64 = base64.b64encode(screenshot).decode()
+            raise RuntimeError(
+                f"Diálogo inesperado — ação abortada por segurança. "
+                f"Título: '{titulo}' | Texto: '{texto}'"
+            )
+        await page.click(".swal2-confirm")
+        await page.wait_for_selector(".swal2-popup", state="hidden", timeout=8000)
+        logger.info("Processamento confirmado via SweetAlert.")
     except Exception as e:
         return await _erro(page, passo, e)
 
