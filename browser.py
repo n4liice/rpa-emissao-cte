@@ -545,7 +545,7 @@ async def _executar_importacao(
             tentativa += 1
             decorrido = _time.monotonic() - _inicio
 
-            await page.click('a[href="#tab-freights"]')
+            await page.evaluate('() => { const a = document.querySelector(\'a[href="#tab-freights"]\'); if (a) a.click(); }')
             # Espera progressiva: 4s nas primeiras tentativas, cresce até 15s
             wait_aba = min(4000 + tentativa * 500, 15000)
             await page.wait_for_timeout(wait_aba)
@@ -578,7 +578,7 @@ async def _executar_importacao(
                 tentativa,
                 decorrido,
             )
-            await page.click('a[href="#tab-invoices"]')
+            await page.evaluate('() => { const a = document.querySelector(\'a[href="#tab-invoices"]\'); if (a) a.click(); }')
             # Espera progressiva ao voltar: 6s no início, cresce até 20s
             wait_volta = min(6000 + tentativa * 500, 20000)
             await page.wait_for_timeout(wait_volta)
