@@ -647,7 +647,7 @@ async def _executar_importacao(
                 );
                 return spinner === null;
             }""",
-            timeout=120000,
+            timeout=600000,
         )
     except Exception as e:
         return await _erro(page, passo, e)
