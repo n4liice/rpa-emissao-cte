@@ -394,8 +394,25 @@ async def _executar_importacao(
     passo = "Passo 14 — Clicar na aba Documentos Importados"
     try:
         logger.info(passo)
-        await page.click('a[href="#tab-invoices"]')
-        await page.wait_for_timeout(1000)
+        # JS click para ignorar overlays que cobrem a aba
+        _clicar_tab_invoices = (
+            "() => { const a = document.querySelector('#batch-modal a[href=\"#tab-invoices\"]')"
+            " || document.querySelector('a[href=\"#tab-invoices\"]'); if (a) a.click(); }"
+        )
+        await page.evaluate(_clicar_tab_invoices)
+        # Aguarda aba ficar ativa; retry de 2x se não ativar
+        for _t14 in range(2):
+            try:
+                await page.wait_for_function(
+                    '() => { const t = document.querySelector("#tab-invoices"); return t && t.classList.contains("active"); }',
+                    timeout=6000,
+                )
+                break
+            except Exception:
+                if _t14 < 1:
+                    logger.info("Aba Documentos Importados não ficou ativa — reclicando...")
+                    await page.evaluate(_clicar_tab_invoices)
+        await page.wait_for_timeout(500)
     except Exception as e:
         return await _erro(page, passo, e)
 
@@ -424,37 +441,50 @@ async def _executar_importacao(
     except Exception as e:
         return await _erro(page, passo, e)
 
-    # ── PASSO 15: Clicar em "Processar Todos" ────────────────────────────────
+    # ── PASSO 15: Verificar Pendentes e clicar em "Processar Todos" ──────────
+    # Seletor escopado em #tab-invoices com ícone fa-file-import para evitar
+    # o botão "Processar Todos" da aba CT-e (que tem fa-share e fica disabled).
     passo = "Passo 15 — Clicar em Processar Todos"
     try:
         logger.info(passo)
-        btn_sel = "#tab-invoices button.btn-primary:not([disabled])"
-        # Aguarda o botão ficar visível e habilitado (até 30s)
-        await page.wait_for_selector(btn_sel, state="visible", timeout=30000)
-        # Retry de até 3x caso ainda apareça desabilitado
-        for tentativa_btn in range(3):
-            habilitado = await page.evaluate(
-                f"""() => {{
-                    const b = document.querySelector('{btn_sel}');
-                    return b ? !b.disabled : false;
-                }}"""
-            )
-            if habilitado:
-                break
-            logger.info("Botão Processar Todos ainda desabilitado — aguardando (tentativa %d)...", tentativa_btn + 1)
-            await page.wait_for_timeout(3000)
+
+        # Verificar contagem de Pendentes (botão fica disabled se Pendentes = 0)
+        pendentes = await page.evaluate(
+            """() => {
+                const tab = document.querySelector('#tab-invoices');
+                if (!tab) return 0;
+                const m = (tab.textContent || '').match(/Pendentes\\s*-\\s*(\\d+)/);
+                return m ? parseInt(m[1]) : 0;
+            }"""
+        )
+        if pendentes == 0:
+            logger.warning("Pendentes = 0 — nenhum documento a processar. Prosseguindo.")
         else:
-            raise RuntimeError("Botão 'Processar Todos' permaneceu desabilitado após 3 tentativas.")
-        # Clique com fallback via JS (botão pode ter tabindex="-1")
-        try:
-            await page.click(btn_sel, timeout=8000)
-        except Exception:
-            await page.evaluate(
-                """() => {
-                    const b = document.querySelector('#tab-invoices button.btn-primary:not([disabled])');
-                    if (b) b.click();
-                }"""
-            )
+            logger.info("Pendentes encontrados: %d", pendentes)
+
+        # Localizar botão correto: fa-file-import dentro de #tab-invoices, não disabled
+        _btn_processar_js = """() => {
+            const tab = document.querySelector('#tab-invoices');
+            if (!tab) return false;
+            const btns = Array.from(tab.querySelectorAll('button'));
+            const btn = btns.find(b => b.querySelector('i.fa-file-import') && !b.disabled);
+            return !!btn;
+        }"""
+        _clicar_btn_processar = """() => {
+            const tab = document.querySelector('#tab-invoices');
+            if (!tab) return;
+            const btns = Array.from(tab.querySelectorAll('button'));
+            const btn = btns.find(b => b.querySelector('i.fa-file-import') && !b.disabled);
+            if (btn) btn.click();
+        }"""
+
+        # Aguarda até 30s para o botão aparecer habilitado
+        await page.wait_for_function(_btn_processar_js, timeout=30000)
+
+        # Clica via JS (ignora overlay e tabindex)
+        await page.evaluate(_clicar_btn_processar)
+        logger.info("Clique em 'Processar Todos' realizado.")
+
     except Exception as e:
         return await _erro(page, passo, e)
 
@@ -463,26 +493,19 @@ async def _executar_importacao(
     try:
         logger.info(passo)
         swal_apareceu = False
-        for tentativa_swal in range(2):
+        for _t16 in range(2):
             try:
                 await page.wait_for_selector(".swal2-popup", state="visible", timeout=8000)
                 swal_apareceu = True
                 break
             except Exception:
-                if tentativa_swal < 1:
+                if _t16 < 1:
                     logger.info("SweetAlert não apareceu — reclicando Processar Todos...")
-                    try:
-                        await page.click(btn_sel, timeout=5000)
-                    except Exception:
-                        await page.evaluate(
-                            """() => {
-                                const b = document.querySelector('#tab-invoices button.btn-primary:not([disabled])');
-                                if (b) b.click();
-                            }"""
-                        )
+                    await page.evaluate(_clicar_btn_processar)
         if not swal_apareceu:
             raise RuntimeError("Diálogo de confirmação não apareceu após 2 tentativas.")
-        # Valida conteúdo antes de confirmar
+
+        # Valida conteúdo antes de confirmar (segurança)
         titulo = await page.inner_text(".swal2-title")
         try:
             texto = await page.inner_text(".swal2-html-container")
@@ -501,13 +524,52 @@ async def _executar_importacao(
     except Exception as e:
         return await _erro(page, passo, e)
 
-    # ── PASSO 18: Aguardar processamento (não-fatal) ──────────────────────────
-    # O ESL Cloud pode não atualizar Pendentes→Processados via AJAX sem reload.
-    # Se a condição não for atendida em 30s, prosseguimos — o Passo 19 detecta
-    # os fretes quando eles aparecerem na aba Fretes.
-    passo = "Passo 18 — Aguardar processamento dos documentos"
+    # ── PASSO 17: Aguardar processamento e tratar modais de resultado ─────────
+    # Não-fatal: se o ESL não atualizar via AJAX em 30s, o Passo 19 detecta
+    # os fretes na aba Fretes. Mas tratamos modais de erro como fatais.
+    passo = "Passo 17 — Aguardar processamento dos documentos"
     try:
         logger.info(passo)
+
+        # Verificar toast de erro imediato (falha de negócio)
+        await page.wait_for_timeout(1500)
+        toast_erro = await page.evaluate(
+            """() => {
+                const t = document.querySelector('.toast-error');
+                return t && t.offsetParent !== null ? (t.textContent || '').trim() : null;
+            }"""
+        )
+        if toast_erro:
+            raise RuntimeError(f"Erro reportado pelo ESL após processamento: {toast_erro}")
+
+        # Fechar #file-result-modal se abrir (resultado informativo)
+        try:
+            await page.wait_for_selector("#file-result-modal.in, #file-result-modal.show",
+                                         state="visible", timeout=3000)
+            logger.info("Modal de resultado detectado — fechando.")
+            await page.evaluate(
+                """() => {
+                    const btn = document.querySelector(
+                        '#file-result-modal [data-dismiss="modal"], #file-result-modal .btn-default'
+                    );
+                    if (btn) btn.click();
+                }"""
+            )
+        except Exception:
+            pass
+
+        # #file-errors-modal indica falha real — captura e falha
+        erros_modal = await page.evaluate(
+            """() => {
+                const m = document.querySelector('#file-errors-modal');
+                if (!m || m.offsetParent === null) return null;
+                return (m.textContent || '').trim().slice(0, 500);
+            }"""
+        )
+        if erros_modal:
+            raise RuntimeError(f"Modal de erros exibido pelo ESL: {erros_modal[:300]}")
+
+        # Aguarda Pendentes→0 (não-fatal)
         try:
             await page.wait_for_function(
                 """() => {
@@ -523,7 +585,7 @@ async def _executar_importacao(
             logger.info("Documentos confirmados como Processados na aba.")
         except Exception:
             logger.info(
-                "Passo 18: timeout aguardando Processados — ESL pode precisar de reload. "
+                "Passo 17: timeout aguardando Processados — ESL pode precisar de reload. "
                 "Prosseguindo para Fretes (Passo 19 verifica os fretes)."
             )
     except Exception as e:
