@@ -751,14 +751,34 @@ async def _executar_importacao(
         )
         logger.info("Status final CT-es: %s", status_cte)
 
+        # Extrai os números dos CT-es autorizados. Na aba Fretes, filtrada por
+        # "Autorizados", cada linha traz o número em <div class="table-text" title="280509/">.
+        numeros_cte = await page.evaluate(
+            """() => {
+                const tab = document.querySelector('#tab-freights');
+                if (!tab) return [];
+                const titulos = Array.from(tab.querySelectorAll('div.table-text[title]'))
+                    .map((el) => el.getAttribute('title') || '');
+                const numeros = titulos
+                    .map((titulo) => titulo.match(/^(\\d+)\\//))
+                    .filter(Boolean)
+                    .map((m) => m[1]);
+                return [...new Set(numeros)];
+            }"""
+        )
+        if status_cte == 'OK' and not numeros_cte:
+            logger.warning("Status OK mas nenhum numero de CT-e foi extraido — verificar seletor 'div.table-text[title]'.")
+        logger.info("Numeros de CT-e extraidos: %s", numeros_cte)
+
         screenshot = await page.screenshot(full_page=False)
         screenshot_b64 = base64.b64encode(screenshot).decode()
         return {
-            "sucesso":    True,
-            "lote":       str(lote) if lote else None,
-            "documentos": len(xml_files),
-            "status_cte": status_cte,
-            "screenshot": screenshot_b64,
+            "sucesso":     True,
+            "lote":        str(lote) if lote else None,
+            "documentos":  len(xml_files),
+            "status_cte":  status_cte,
+            "numeros_cte": numeros_cte,
+            "screenshot":  screenshot_b64,
         }
 
     except Exception as e:

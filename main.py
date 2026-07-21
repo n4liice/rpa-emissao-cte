@@ -55,9 +55,11 @@ async def lifespan(app: FastAPI):
     global _playwright, _browser
     logger.info("Iniciando automacao...")
     logger.info("Logs em arquivo: %s", LOG_FILE)
+    headless = os.environ.get("RPA_HEADLESS", "true").strip().lower() not in ("false", "0", "no")
+    logger.info("Modo headless: %s", headless)
     _playwright = await async_playwright().start()
     _browser = await _playwright.chromium.launch(
-        headless=True,
+        headless=headless,
         args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
     )
     logger.info("Browser Chromium pronto.")
@@ -96,7 +98,7 @@ class XmlFilePayload(BaseModel):
 
 class ImportarRequest(BaseModel):
     customer_id: str
-    xml: str | None = None                        # XML cru (formato simples)
+    xml: str | list[str] | None = None            # XML(s) cru(s) (formato simples) — 1 ou mais notas
     corporation_id: str = "MANDALOG - BAURU"      # filial padrão
     # campos legados mantidos para compatibilidade
     customer_name: str | None = None
@@ -156,9 +158,20 @@ async def importar(req: ImportarRequest):
 
     # Resolve xml_files e customer_name a partir do formato recebido
     if req.xml is not None:
-        xml_b64 = base64.b64encode(req.xml.encode("utf-8")).decode()
-        xml_files = [{"name": _extrair_nome_nfe(req.xml), "content_base64": xml_b64}]
-        customer_name = req.customer_name or _extrair_nome_emitente(req.xml) or req.customer_id
+        xmls_brutos = req.xml if isinstance(req.xml, list) else [req.xml]
+        xml_files = []
+        for i, xml_bruto in enumerate(xmls_brutos, start=1):
+            nome = _extrair_nome_nfe(xml_bruto)
+            if nome == "documento.xml":
+                nome = f"documento_{i}.xml"
+            xml_files.append({
+                "name": nome,
+                "content_base64": base64.b64encode(xml_bruto.encode("utf-8")).decode(),
+            })
+        nome_emitente = next(
+            (n for xml_bruto in xmls_brutos if (n := _extrair_nome_emitente(xml_bruto))), None
+        )
+        customer_name = req.customer_name or nome_emitente or req.customer_id
     elif req.xml_files:
         xml_files = [item.model_dump() for item in req.xml_files]
         customer_name = req.customer_name or req.customer_id
